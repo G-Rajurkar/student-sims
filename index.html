@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Records</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#f3f5f7; --card:#fff; --ink:#14213d; --muted:#5b6678; --line:#d5dbe3; --accent:#0b6e6e; --danger:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#10151c; --card:#18202b; --ink:#e8ecf2; --muted:#9aa6b8; --line:#2c3746; --accent:#3cc2b8; --danger:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.5 "Public Sans", system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.9rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:20px; margin-bottom:20px; }
+  h2 { font-size:1.05rem; margin:0 0 12px; }
+  form { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--muted); }
+  input { font:inherit; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:4px; padding:8px 10px; }
+  input:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button { font:inherit; font-weight:500; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:4px; padding:8px 14px; cursor:pointer; }
+  @media (prefers-color-scheme: dark) { button { color:#06201e; } }
+  button.ghost { background:transparent; color:var(--accent); }
+  button.danger { background:transparent; border-color:var(--danger); color:var(--danger); }
+  .actions { display:flex; gap:8px; align-items:end; }
+  .bar { display:flex; gap:8px; margin-bottom:12px; }
+  .bar input { flex:1; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.92rem; }
+  th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:500; }
+  td.row-actions { display:flex; gap:6px; }
+  #msg { min-height:1.5em; margin:0 0 12px; font-weight:500; }
+  #msg.err { color:var(--danger); } #msg.ok { color:var(--accent); }
+  .empty { color:var(--muted); padding:16px 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Student records</h1>
+  <p class="sub">Add, search, edit and remove students. Data is stored in MongoDB Atlas through the Render API.</p>
+  <p id="msg" role="status"></p>
+
+  <section class="panel">
+    <h2 id="form-title">Add a student</h2>
+    <form id="form">
+      <label>Student ID<input name="studentId" required placeholder="ST101"></label>
+      <label>Name<input name="name" required></label>
+      <label>Email<input name="email" type="email" required></label>
+      <label>Department<input name="department" required></label>
+      <label>Semester<input name="semester" type="number" min="1" max="12" required></label>
+      <label>Contact<input name="contact" inputmode="tel"></label>
+      <div class="actions">
+        <button type="submit" id="submit">Add student</button>
+        <button type="button" class="ghost" id="cancel" hidden>Cancel edit</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="bar">
+      <input id="q" type="search" placeholder="Search by name, ID or department" aria-label="Search students">
+      <button class="ghost" id="clear">Show all</button>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Department</th><th>Sem</th><th>Contact</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="empty" hidden>No students found. Add one above.</p>
+  </section>
+</main>
+
+<script>
+// 1) After deploying the backend on Render, put its URL here (no trailing slash):
+const API = "https://student-api.onrender.com/api/students";
+
+const $ = (id) => document.getElementById(id);
+const form = $("form"); let editing = null;
+
+function say(text, type) { const m = $("msg"); m.textContent = text; m.className = type || ""; }
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function call(url, opts) {
+  const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || "Request failed (" + res.status + ")");
+  return body;
+}
+
+async function load() {
+  const q = $("q").value.trim();
+  try {
+    say("Loading…");
+    const { data } = await call(API + (q ? "?q=" + encodeURIComponent(q) : ""));
+    $("rows").innerHTML = data.map((s) => `
+      <tr>
+        <td>${esc(s.studentId)}</td><td>${esc(s.name)}</td><td>${esc(s.email)}</td>
+        <td>${esc(s.department)}</td><td>${esc(s.semester)}</td><td>${esc(s.contact)}</td>
+        <td class="row-actions">
+          <button class="ghost" data-edit="${esc(s.studentId)}">Edit</button>
+          <button class="danger" data-del="${esc(s.studentId)}">Delete</button>
+        </td>
+      </tr>`).join("");
+    $("empty").hidden = data.length > 0;
+    say("");
+    window._data = data;
+  } catch (e) { say(e.message + ". The free Render service may take ~30s to wake up; try again.", "err"); }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(form));
+  body.semester = Number(body.semester);
+  try {
+    const out = editing
+      ? await call(API + "/" + encodeURIComponent(editing), { method: "PUT", body: JSON.stringify(body) })
+      : await call(API, { method: "POST", body: JSON.stringify(body) });
+    reset(); await load(); say(out.message, "ok");
+  } catch (err) { say(err.message, "err"); }
+});
+
+$("rows").addEventListener("click", async (e) => {
+  const edit = e.target.dataset.edit, del = e.target.dataset.del;
+  if (edit) {
+    const s = window._data.find((x) => x.studentId === edit);
+    for (const k of ["studentId","name","email","department","semester","contact"]) form.elements[k].value = s[k] ?? "";
+    form.elements.studentId.readOnly = true; editing = edit;
+    $("form-title").textContent = "Edit " + s.name; $("submit").textContent = "Save changes"; $("cancel").hidden = false;
+    form.scrollIntoView({ behavior: "smooth" });
+  }
+  if (del && confirm("Delete student " + del + "?")) {
+    try { const out = await call(API + "/" + encodeURIComponent(del), { method: "DELETE" }); await load(); say(out.message, "ok"); }
+    catch (err) { say(err.message, "err"); }
+  }
+});
+
+function reset() {
+  form.reset(); form.elements.studentId.readOnly = false; editing = null;
+  $("form-title").textContent = "Add a student"; $("submit").textContent = "Add student"; $("cancel").hidden = true;
+}
+$("cancel").onclick = reset;
+$("q").addEventListener("input", () => { clearTimeout(window._t); window._t = setTimeout(load, 300); });
+$("clear").onclick = () => { $("q").value = ""; load(); };
+load();
+</script>
+</body>
+</html>
